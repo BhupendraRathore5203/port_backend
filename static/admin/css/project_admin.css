@@ -1,0 +1,24 @@
+/* Make CKEditor and Markdown widgets full width */
+.field-long_description .cke,
+.field-long_description_markdown .markdownx-widget {
+    width: 100% !important;
+}
+
+/* Style the admin textareas */
+textarea[name="long_description"],
+textarea[name="long_description_markdown"] {
+    width: 100%;
+    min-height: 400px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Add some padding around the editors */
+.field-long_description,
+.field-long_description_markdown {
+    padding: 15px;
+    background: #f9f9f9;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
