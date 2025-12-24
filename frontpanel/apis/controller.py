@@ -14,6 +14,9 @@ from datetime import datetime, timedelta
 
 from accounts.models import (
     AdminUser,
+    Education,
+    Experience,
+    Resume,
     RotatingText,
     Technology,
     Project,
@@ -69,6 +72,13 @@ from frontpanel.schemas import (
     ErrorResponse,
     ValidationErrorResponse,
     NotFoundResponse,
+    
+    
+    ExperienceSchema,
+    ExperienceFilterSchema,
+    EducationSchema,
+    EducationFilterSchema,
+    ResumeSchema,
 )
 from frontpanel.utils import get_absolute_url
 from my_port import settings
@@ -80,7 +90,7 @@ class PublicController:
     """Public endpoints accessible to everyone"""
 
     @route.get("/home", response=HomeDataResponse)
-    def get_home_data(self):
+    def get_home_data(self, request):
         """Get homepage data"""
         stats = StatsResponse(
             total_projects=Project.objects.filter(is_public=True).count(),
@@ -88,11 +98,13 @@ class PublicController:
             total_demos=DemoInstance.objects.filter(
                 is_public=True, status="online"
             ).count(),
-            total_messages=0,  # Not public
+            total_messages=0,
             featured_projects=Project.objects.filter(
                 is_featured=True, is_public=True
             ).count(),
             featured_technologies=Technology.objects.filter(is_featured=True).count(),
+            total_experiences=Experience.objects.count(),
+            total_education=Education.objects.count(),
         )
 
         featured_projects = Project.objects.filter(
@@ -108,6 +120,28 @@ class PublicController:
         )[:4]
 
         content_blocks = ContentBlock.objects.filter(is_active=True).order_by("order")
+        
+        # New: Featured experiences and education
+        featured_experiences = Experience.objects.filter(is_featured=True).order_by("-start_date")[:3]
+        featured_education = Education.objects.filter(is_featured=True).order_by("-start_date")[:3]
+        
+        # New: Primary resume
+        primary_resume = Resume.objects.filter(is_primary=True, is_public=True).first()
+        
+        # Convert experiences using custom method
+        experiences_data = []
+        for exp in featured_experiences:
+            experiences_data.append(ExperienceSchema.from_experience(exp, request))
+        
+        # Convert education using custom method
+        education_data = []
+        for edu in featured_education:
+            education_data.append(EducationSchema.from_education(edu, request))
+        
+        # Convert resume using custom method
+        resume_data = None
+        if primary_resume:
+            resume_data = ResumeSchema.from_resume(primary_resume, request)
 
         return HomeDataResponse(
             stats=stats,
@@ -117,6 +151,9 @@ class PublicController:
             ],
             recent_projects=[ProjectSchema.from_orm(p) for p in recent_projects],
             content_blocks=[ContentBlockSchema.from_orm(c) for c in content_blocks],
+            featured_experiences=experiences_data,
+            featured_education=education_data,
+            primary_resume=resume_data,
         )
 
 
@@ -441,14 +478,19 @@ class PublicController:
 
         if settings_obj.favicon:
             favicon_url = f"{base_url}{settings_obj.favicon.url}"
+        if settings_obj.my_image:
+            my_image_url = f"{base_url}{settings_obj.my_image.url}"
 
         return {
             "site": {
                 "name": settings_obj.site_name,
                 "tagline": settings_obj.site_tagline,
                 "contact_email": settings_obj.contact_email,
+                "contact_phone": settings_obj.contact_phone,
+                "location": settings_obj.location,
                 "logo": logo_url,
                 "favicon": favicon_url,
+                "my_image": my_image_url,
                 "self_description": settings_obj.self_description,
                 "self_long_description": settings_obj.self_long_description,
             },
@@ -473,6 +515,358 @@ class PublicController:
         """Get all active rotating texts for frontend"""
         texts = RotatingText.objects.filter(is_active=True)
         return RotatingTextResponse.from_queryset(texts)
+    
+    
+    @route.get("/experiences", response=PaginatedResponse)
+    def get_experiences(self, request, filters: ExperienceFilterSchema = Query(...)):
+        """Get paginated work experiences with filtering"""
+        queryset = Experience.objects.all()
+
+        # Apply filters
+        if filters.experience_type:
+            queryset = queryset.filter(experience_type=filters.experience_type)
+
+        if filters.is_current is not None:
+            queryset = queryset.filter(is_current=filters.is_current)
+
+        if filters.is_featured is not None:
+            queryset = queryset.filter(is_featured=filters.is_featured)
+
+        if filters.search:
+            queryset = queryset.filter(
+                Q(position__icontains=filters.search)
+                | Q(company__icontains=filters.search)
+                | Q(description__icontains=filters.search)
+            )
+
+        # Pagination
+        paginator = Paginator(queryset.order_by("-start_date", "order"), filters.page_size)
+        page_obj = paginator.get_page(filters.page)
+
+        experiences_data = []
+        for experience in page_obj.object_list:
+            # Use your custom from_experience method instead of from_orm
+            exp_schema = ExperienceSchema.from_experience(experience, request)
+            if exp_schema:
+                exp_dict = exp_schema.dict()
+                experiences_data.append(exp_dict)
+
+        return PaginatedResponse(
+            items=experiences_data,
+            total=paginator.count,
+            page=filters.page,
+            page_size=filters.page_size,
+            total_pages=paginator.num_pages,
+            has_next=page_obj.has_next(),
+            has_previous=page_obj.has_previous(),
+        )
+
+    @route.get("/experiences/{experience_id}", response={200: ExperienceSchema, 404: NotFoundResponse})
+    def get_experience_detail(self, request, experience_id: str):
+        """Get single experience by ID"""
+        try:
+            experience = Experience.objects.get(id=experience_id)
+        except Experience.DoesNotExist:
+            return 404, {"detail": "Experience not found"}
+        
+        # Use from_experience instead of from_orm
+        exp_schema = ExperienceSchema.from_experience(experience, request)
+        if exp_schema:
+            return exp_schema
+        return 404, {"detail": "Experience not found"}
+
+    @route.get("/about/experience", response=List[ExperienceSchema])
+    def get_featured_experiences(self, request):
+        """Get featured experiences for about page"""
+        experiences = Experience.objects.filter(is_featured=True).order_by("-start_date", "order")[:5]
+        # Use from_experience for each experience
+        return [ExperienceSchema.from_experience(exp, request) for exp in experiences if ExperienceSchema.from_experience(exp, request)]
+
+
+    @route.get("/education", response=PaginatedResponse)
+    def get_education(self, request, filters: EducationFilterSchema = Query(...)):
+        """Get paginated education records with filtering"""
+        queryset = Education.objects.all()
+
+        # Apply filters
+        if filters.education_type:
+            queryset = queryset.filter(education_type=filters.education_type)
+
+        if filters.is_current is not None:
+            queryset = queryset.filter(is_current=filters.is_current)
+
+        if filters.is_featured is not None:
+            queryset = queryset.filter(is_featured=filters.is_featured)
+
+        if filters.search:
+            queryset = queryset.filter(
+                Q(institution__icontains=filters.search)
+                | Q(degree__icontains=filters.search)
+                | Q(field_of_study__icontains=filters.search)
+            )
+
+        # Pagination
+        paginator = Paginator(queryset.order_by("-start_date", "order"), filters.page_size)
+        page_obj = paginator.get_page(filters.page)
+
+        education_data = []
+        for edu in page_obj.object_list:
+            # Use from_education instead of from_orm
+            edu_schema = EducationSchema.from_education(edu, request)
+            if edu_schema:
+                edu_dict = edu_schema.dict()
+                education_data.append(edu_dict)
+
+        return PaginatedResponse(
+            items=education_data,
+            total=paginator.count,
+            page=filters.page,
+            page_size=filters.page_size,
+            total_pages=paginator.num_pages,
+            has_next=page_obj.has_next(),
+            has_previous=page_obj.has_previous(),
+        )
+
+    @route.get("/education/{education_id}", response={200: EducationSchema, 404: NotFoundResponse})
+    def get_education_detail(self, request, education_id: str):
+        """Get single education record by ID"""
+        try:
+            education = Education.objects.get(id=education_id)
+        except Education.DoesNotExist:
+            return 404, {"detail": "Education record not found"}
+        
+        # Use from_education instead of from_orm
+        edu_schema = EducationSchema.from_education(education, request)
+        if edu_schema:
+            return edu_schema
+        return 404, {"detail": "Education record not found"}
+
+    @route.get("/resumes", response=List[ResumeSchema])
+    def get_resumes(self, request):
+        """Get all public resumes"""
+        resumes = Resume.objects.filter(is_public=True).order_by("-is_primary", "-last_updated")
+        
+        resumes_data = []
+        for resume in resumes:
+            # Get file URL
+            file_url = None
+            if resume.file:
+                file_url = get_absolute_url(resume.file.url)
+            
+            # Convert experiences using from_experience
+            experiences = []
+            if hasattr(resume, 'experiences'):
+                experiences = [ExperienceSchema.from_experience(exp, request) for exp in resume.experiences.all()]
+                experiences = [exp for exp in experiences if exp]  # Filter out None values
+            
+            # Convert education using from_education
+            education = []
+            if hasattr(resume, 'education'):
+                education = [EducationSchema.from_education(edu, request) for edu in resume.education.all()]
+                education = [edu for edu in education if edu]  # Filter out None values
+            
+            # Convert projects and technologies (these should work with from_orm)
+            projects = []
+            if hasattr(resume, 'projects'):
+                projects = [ProjectSchema.from_orm(proj).dict() for proj in resume.projects.all()]
+            
+            technologies = []
+            if hasattr(resume, 'technologies'):
+                technologies = [TechnologySchema.from_orm(tech).dict() for tech in resume.technologies.all()]
+            
+            resume_dict = {
+                'id': str(resume.id),
+                'title': resume.title,
+                'file': file_url,
+                'file_type': resume.file_type,
+                'resume_type': resume.resume_type,
+                'language': resume.language,
+                'version': resume.version,
+                'is_primary': resume.is_primary,
+                'is_public': resume.is_public,
+                'last_updated': resume.last_updated.isoformat() if resume.last_updated else None,
+                'file_size': resume.file_size,
+                'download_count': resume.download_count,
+                'view_count': resume.view_count,
+                'description': resume.description,
+                'metadata': resume.metadata if resume.metadata else {},
+                'file_size_human': resume.file_size_human if hasattr(resume, 'file_size_human') else None,
+                'download_url': resume.download_url if hasattr(resume, 'download_url') else None,
+                'preview_url': resume.preview_url if hasattr(resume, 'preview_url') else None,
+                'experiences': experiences,
+                'education': education,
+                'projects': projects,
+                'technologies': technologies,
+            }
+            
+            resumes_data.append(resume_dict)
+        
+        return resumes_data
+
+
+    @route.get("/resumes/{resume_id}", response={200: ResumeSchema, 404: NotFoundResponse})
+    def get_resume_detail(self, request, resume_id: str):
+        """Get single resume by ID"""
+        try:
+            resume = Resume.objects.get(id=resume_id, is_public=True)
+        except Resume.DoesNotExist:
+            return 404, {"detail": "Resume not found or not public"}
+        
+        # Use the same logic as above
+        file_url = None
+        if resume.file:
+            file_url = get_absolute_url(resume.file.url)
+        
+        experiences = []
+        if hasattr(resume, 'experiences'):
+            experiences = [ExperienceSchema.from_experience(exp, request) for exp in resume.experiences.all()]
+            experiences = [exp for exp in experiences if exp]
+        
+        education = []
+        if hasattr(resume, 'education'):
+            education = [EducationSchema.from_education(edu, request) for edu in resume.education.all()]
+            education = [edu for edu in education if edu]
+        
+        projects = []
+        if hasattr(resume, 'projects'):
+            projects = [ProjectSchema.from_orm(proj).dict() for proj in resume.projects.all()]
+        
+        technologies = []
+        if hasattr(resume, 'technologies'):
+            technologies = [TechnologySchema.from_orm(tech).dict() for tech in resume.technologies.all()]
+        
+        resume_dict = {
+            'id': str(resume.id),
+            'title': resume.title,
+            'file': file_url,
+            'file_type': resume.file_type,
+            'resume_type': resume.resume_type,
+            'language': resume.language,
+            'version': resume.version,
+            'is_primary': resume.is_primary,
+            'is_public': resume.is_public,
+            'last_updated': resume.last_updated.isoformat() if resume.last_updated else None,
+            'file_size': resume.file_size,
+            'download_count': resume.download_count,
+            'view_count': resume.view_count,
+            'description': resume.description,
+            'metadata': resume.metadata if resume.metadata else {},
+            'file_size_human': resume.file_size_human if hasattr(resume, 'file_size_human') else None,
+            'download_url': resume.download_url if hasattr(resume, 'download_url') else None,
+            'preview_url': resume.preview_url if hasattr(resume, 'preview_url') else None,
+            'experiences': experiences,
+            'education': education,
+            'projects': projects,
+            'technologies': technologies,
+        }
+        
+        return resume_dict
+
+
+    @route.get("/resumes/primary", response={200: ResumeSchema, 404: NotFoundResponse})
+    def get_primary_resume(self, request):
+        """Get the primary resume"""
+        try:
+            resume = Resume.objects.get(is_primary=True, is_public=True)
+        except Resume.DoesNotExist:
+            return 404, {"detail": "No primary resume found"}
+        
+        resume_dict = ResumeSchema.from_orm(resume).dict()
+        
+        # Get absolute URL for resume file
+        if resume.file:
+            resume_dict["file"] = get_absolute_url(resume.file.url)
+        
+        # Get related experiences
+        resume_dict["experiences"] = [
+            ExperienceSchema.from_orm(exp).dict()
+            for exp in resume.experiences.all()
+        ]
+        
+        # Get related education
+        resume_dict["education"] = [
+            EducationSchema.from_orm(edu).dict()
+            for edu in resume.education.all()
+        ]
+        
+        # Get related projects
+        resume_dict["projects"] = [
+            ProjectSchema.from_orm(proj).dict()
+            for proj in resume.projects.all()
+        ]
+        
+        # Get related technologies
+        resume_dict["technologies"] = [
+            TechnologySchema.from_orm(tech).dict()
+            for tech in resume.technologies.all()
+        ]
+        
+        return resume_dict
+
+    @route.get("/resumes/{resume_id}/download", response={200: Any, 404: NotFoundResponse})
+    def download_resume(self, request, resume_id: str):
+        """Download resume file"""
+        try:
+            resume = Resume.objects.get(id=resume_id, is_public=True)
+        except Resume.DoesNotExist:
+            return 404, {"detail": "Resume not found or not public"}
+        
+        # Increment download count
+        resume.increment_download_count()
+        
+        # Return a FileResponse directly
+        from django.http import FileResponse
+        import os
+        
+        file_path = resume.file.path
+        file_name = os.path.basename(file_path)
+        
+        # Get the content type
+        import mimetypes
+        content_type, _ = mimetypes.guess_type(file_name)
+        
+        # Create and return the FileResponse
+        response = FileResponse(open(file_path, 'rb'), 
+                            content_type=content_type or 'application/octet-stream')
+        response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+        
+        # Django Ninja will automatically handle FileResponse objects
+        return response
+
+    @route.get("/about/experience", response=List[ExperienceSchema])
+    def get_featured_experiences(self):
+        """Get featured experiences for about page"""
+        experiences = Experience.objects.filter(is_featured=True).order_by("-start_date", "order")[:5]
+        return [ExperienceSchema.from_orm(exp) for exp in experiences]
+
+    @route.get("/about/education", response=List[EducationSchema])
+    def get_featured_education(self):
+        """Get featured education for about page"""
+        education = Education.objects.filter(is_featured=True).order_by("-start_date", "order")[:5]
+        return [EducationSchema.from_orm(edu) for edu in education]
+
+    @route.get("/about/cv", response=Optional[ResumeSchema])
+    def get_about_resume(self, request):
+        """Get resume for about page (prefers primary)"""
+        try:
+            resume = Resume.objects.filter(is_public=True).order_by("-is_primary", "-last_updated").first()
+            if not resume:
+                return None
+            
+            resume_dict = ResumeSchema.from_orm(resume).dict()
+            
+            if resume.file:
+                resume_dict["file"] = get_absolute_url(resume.file.file.url)
+            
+            return resume_dict
+            
+        except Exception as e:
+            print(f"Error getting resume: {e}")
+            return None
+    
+    
+    
+    
 
 
 def get_absolute_media_url(relative_url):

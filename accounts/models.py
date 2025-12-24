@@ -796,6 +796,16 @@ class SiteSettings(models.Model):
         default="contact@example.com",
         verbose_name=_("Contact Email")
     )
+    contact_phone = models.CharField(
+        max_length=15,
+        null=True,
+        blank=True
+    )
+    location = models.CharField(
+        max_length=40,
+        null=True,
+        blank=True
+    )
     logo = models.ImageField(
         upload_to='site/',
         blank=True,
@@ -808,9 +818,13 @@ class SiteSettings(models.Model):
         null=True,
         verbose_name=_("Favicon")
     )
-    
-    self_description = models.CharField(
-        max_length=256,
+    my_image = models.ImageField(
+        upload_to='site/my_image/',
+        blank=True,
+        null=True,
+        verbose_name=_("MY_IMAGE")
+    )
+    self_description = models.TextField(
         blank=True,
         null=True,
         verbose_name=_("Self Description")
@@ -1140,3 +1154,676 @@ class CodeSnippet(models.Model):
         """Calculate line count automatically"""
         self.line_count = self.code.count('\n') + 1
         super().save(*args, **kwargs)
+        
+        
+        
+        
+        
+
+class Experience(models.Model):
+    """
+    Model for work/professional experience
+    """
+    class ExperienceType(models.TextChoices):
+        FULL_TIME = 'full_time', _('Full-time')
+        PART_TIME = 'part_time', _('Part-time')
+        CONTRACT = 'contract', _('Contract')
+        FREELANCE = 'freelance', _('Freelance')
+        INTERNSHIP = 'internship', _('Internship')
+        VOLUNTEER = 'volunteer', _('Volunteer')
+    
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    position = models.CharField(
+        max_length=200,
+        verbose_name=_("Position/Role")
+    )
+    company = models.CharField(
+        max_length=200,
+        verbose_name=_("Company/Organization")
+    )
+    company_logo = models.ImageField(
+        upload_to='experience/logos/',
+        blank=True,
+        null=True,
+        verbose_name=_("Company Logo")
+    )
+    company_website = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name=_("Company Website")
+    )
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name=_("Location")
+    )
+    experience_type = models.CharField(
+        max_length=20,
+        choices=ExperienceType.choices,
+        default=ExperienceType.FULL_TIME,
+        verbose_name=_("Employment Type")
+    )
+    start_date = models.DateField(
+        verbose_name=_("Start Date")
+    )
+    end_date = models.DateField(
+        blank=True,
+        null=True,
+        verbose_name=_("End Date")
+    )
+    is_current = models.BooleanField(
+        default=False,
+        verbose_name=_("Currently Working Here"),
+        help_text=_("Check if this is your current position")
+    )
+    
+    description = RichTextField(
+        verbose_name=_("Job Description"),
+        config_name='default',
+        blank=True,
+        null=True
+    )
+    
+    responsibilities = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("Key Responsibilities"),
+        help_text=_("List of key responsibilities and achievements")
+    )
+    
+    technologies = models.ManyToManyField(
+        Technology,
+        related_name='experiences',
+        verbose_name=_("Technologies Used"),
+        blank=True
+    )
+    
+    projects = models.ManyToManyField(
+        Project,
+        related_name='related_experiences',
+        verbose_name=_("Related Projects"),
+        blank=True
+    )
+    
+    skills_gained = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("Skills Gained"),
+        help_text=_("List of skills learned/developed")
+    )
+    
+    is_featured = models.BooleanField(
+        default=False,
+        verbose_name=_("Featured Experience")
+    )
+    
+    order = models.IntegerField(
+        default=0,
+        verbose_name=_("Display Order"),
+        help_text=_("Higher numbers appear first")
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = _("Experience")
+        verbose_name_plural = _("Experiences")
+        ordering = ['-start_date', 'order']
+        indexes = [
+            models.Index(fields=['is_current', 'is_featured', 'start_date']),
+        ]
+    
+    def __str__(self):
+        return f"{self.position} at {self.company}"
+    
+    def clean(self):
+        """Validate experience dates"""
+        if self.start_date and self.end_date and not self.is_current:
+            if self.start_date > self.end_date:
+                raise ValidationError(_("Start date cannot be after end date."))
+        
+        if self.is_current and self.end_date:
+            raise ValidationError(_("Current positions should not have an end date."))
+    
+    @property
+    def duration(self):
+        """Calculate duration in human-readable format"""
+        from dateutil.relativedelta import relativedelta
+        
+        if self.is_current:
+            end_date = timezone.now().date()
+        elif self.end_date:
+            end_date = self.end_date
+        else:
+            return "Present"
+        
+        delta = relativedelta(end_date, self.start_date)
+        
+        years = delta.years
+        months = delta.months
+        
+        if years > 0 and months > 0:
+            return f"{years} yr {months} mo"
+        elif years > 0:
+            return f"{years} yr"
+        elif months > 0:
+            return f"{months} mo"
+        else:
+            return "Less than a month"
+    
+    @property
+    def duration_months(self):
+        """Calculate total months of experience"""
+        if self.is_current:
+            end_date = timezone.now().date()
+        elif self.end_date:
+            end_date = self.end_date
+        else:
+            return 0
+        
+        total_months = (end_date.year - self.start_date.year) * 12 + (end_date.month - self.start_date.month)
+        return max(0, total_months)
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        
+        # If it's current position, ensure end_date is None
+        if self.is_current:
+            self.end_date = None
+        
+        super().save(*args, **kwargs)
+        
+        
+        
+class Education(models.Model):
+    """
+    Model for educational qualifications
+    """
+    class EducationType(models.TextChoices):
+        BACHELORS = 'bachelors', _("Bachelor's Degree")
+        MASTERS = 'masters', _("Master's Degree")
+        PHD = 'phd', _('PhD/Doctorate')
+        ASSOCIATE = 'associate', _("Associate Degree")
+        DIPLOMA = 'diploma', _('Diploma')
+        CERTIFICATION = 'certification', _('Certification')
+        COURSE = 'course', _('Course/Training')
+        BOOTCAMP = 'bootcamp', _('Coding Bootcamp')
+    
+    class GradeType(models.TextChoices):
+        GPA = 'gpa', _('GPA')
+        PERCENTAGE = 'percentage', _('Percentage')
+        CGPA = 'cgpa', _('CGPA')
+        GRADE = 'grade', _('Letter Grade')
+        NONE = 'none', _('No Grade')
+    
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    
+    institution = models.CharField(
+        max_length=200,
+        verbose_name=_("Institution Name")
+    )
+    
+    institution_logo = models.ImageField(
+        upload_to='education/logos/',
+        blank=True,
+        null=True,
+        verbose_name=_("Institution Logo")
+    )
+    
+    institution_website = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name=_("Institution Website")
+    )
+    
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name=_("Location")
+    )
+    
+    degree = models.CharField(
+        max_length=200,
+        verbose_name=_("Degree/Qualification")
+    )
+    
+    field_of_study = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        verbose_name=_("Field of Study/Major")
+    )
+    
+    education_type = models.CharField(
+        max_length=20,
+        choices=EducationType.choices,
+        default=EducationType.BACHELORS,
+        verbose_name=_("Education Type")
+    )
+    
+    start_date = models.DateField(
+        verbose_name=_("Start Date")
+    )
+    
+    end_date = models.DateField(
+        blank=True,
+        null=True,
+        verbose_name=_("End Date/Graduation Date")
+    )
+    
+    is_current = models.BooleanField(
+        default=False,
+        verbose_name=_("Currently Studying"),
+        help_text=_("Check if currently enrolled")
+    )
+    
+    description = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Description"),
+        help_text=_("Brief description of the program")
+    )
+    
+    grade_type = models.CharField(
+        max_length=20,
+        choices=GradeType.choices,
+        default=GradeType.NONE,
+        verbose_name=_("Grade Type")
+    )
+    
+    grade_value = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        verbose_name=_("Grade Value"),
+        help_text=_("e.g., 3.8 for GPA, 85 for percentage")
+    )
+    
+    grade_scale = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        verbose_name=_("Grade Scale"),
+        help_text=_("e.g., 4.0 for GPA scale, 100 for percentage scale")
+    )
+    
+    grade_display = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name=_("Grade Display"),
+        help_text=_("How to display the grade (e.g., '3.8/4.0 GPA')")
+    )
+    
+    achievements = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("Achievements/Awards"),
+        help_text=_("List of achievements, awards, or honors")
+    )
+    
+    courses = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("Relevant Courses"),
+        help_text=_("List of relevant courses completed")
+    )
+    
+    skills_learned = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("Skills Learned"),
+        help_text=_("List of skills acquired during the program")
+    )
+    
+    thesis_title = models.CharField(
+        max_length=300,
+        blank=True,
+        null=True,
+        verbose_name=_("Thesis/Dissertation Title")
+    )
+    
+    thesis_url = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name=_("Thesis URL/Link")
+    )
+    
+    transcript_url = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name=_("Transcript URL")
+    )
+    
+    is_featured = models.BooleanField(
+        default=False,
+        verbose_name=_("Featured Education")
+    )
+    
+    order = models.IntegerField(
+        default=0,
+        verbose_name=_("Display Order"),
+        help_text=_("Higher numbers appear first")
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = _("Education")
+        verbose_name_plural = _("Education")
+        ordering = ['-start_date', 'order']
+    
+    def __str__(self):
+        return f"{self.degree} at {self.institution}"
+    
+    def clean(self):
+        """Validate education dates and grades"""
+        if self.start_date and self.end_date and not self.is_current:
+            if self.start_date > self.end_date:
+                raise ValidationError(_("Start date cannot be after end date."))
+        
+        if self.is_current and self.end_date:
+            raise ValidationError(_("Current education should not have an end date."))
+        
+        if self.grade_value and self.grade_scale:
+            if self.grade_value > self.grade_scale:
+                raise ValidationError(_("Grade value cannot be greater than grade scale."))
+    
+    @property
+    def duration_years(self):
+        """Calculate duration in years"""
+        if self.is_current:
+            end_date = timezone.now().date()
+        elif self.end_date:
+            end_date = self.end_date
+        else:
+            return "Present"
+        
+        years = end_date.year - self.start_date.year
+        if end_date.month < self.start_date.month or (end_date.month == self.start_date.month and end_date.day < self.start_date.day):
+            years -= 1
+        
+        return years
+    
+    @property
+    def formatted_grade(self):
+        """Format grade for display"""
+        if not self.grade_value:
+            return None
+        
+        if self.grade_display:
+            return self.grade_display
+        
+        grade_type_map = {
+            'gpa': 'GPA',
+            'percentage': '%',
+            'cgpa': 'CGPA',
+            'grade': 'Grade'
+        }
+        
+        suffix = grade_type_map.get(self.grade_type, '')
+        
+        if self.grade_scale:
+            return f"{self.grade_value}/{self.grade_scale} {suffix}".strip()
+        else:
+            return f"{self.grade_value} {suffix}".strip()
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        
+        # If it's current education, ensure end_date is None
+        if self.is_current:
+            self.end_date = None
+        
+        super().save(*args, **kwargs)
+        
+        
+        
+class Resume(models.Model):
+    """
+    Model for storing resume files and resume-related information
+    """
+    class ResumeType(models.TextChoices):
+        CURRENT = 'current', _('Current Resume')
+        TECHNICAL = 'technical', _('Technical Resume')
+        CREATIVE = 'creative', _('Creative Resume')
+        ACADEMIC = 'academic', _('Academic CV')
+        CONCISE = 'concise', _('One-Page Resume')
+        DETAILED = 'detailed', _('Detailed Resume')
+        COVER_LETTER = 'cover_letter', _('Cover Letter')
+    
+    class FileType(models.TextChoices):
+        PDF = 'pdf', _('PDF')
+        DOCX = 'docx', _('Word Document')
+        TXT = 'txt', _('Plain Text')
+        HTML = 'html', _('HTML')
+    
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    
+    title = models.CharField(
+        max_length=200,
+        verbose_name=_("Resume Title"),
+        help_text=_("e.g., 'Software Engineer Resume', 'Technical CV 2024'")
+    )
+    
+    file = models.FileField(
+        upload_to='resumes/',
+        verbose_name=_("Resume File"),
+        help_text=_("Upload your resume file (PDF, DOCX, etc.)")
+    )
+    
+    file_type = models.CharField(
+        max_length=10,
+        choices=FileType.choices,
+        default=FileType.PDF,
+        verbose_name=_("File Type")
+    )
+    
+    resume_type = models.CharField(
+        max_length=20,
+        choices=ResumeType.choices,
+        default=ResumeType.CURRENT,
+        verbose_name=_("Resume Type")
+    )
+    
+    language = models.CharField(
+        max_length=10,
+        default='en',
+        verbose_name=_("Language"),
+        help_text=_("Language code (e.g., 'en', 'fr', 'es')")
+    )
+    
+    version = models.CharField(
+        max_length=20,
+        default='1.0',
+        verbose_name=_("Version"),
+        help_text=_("Resume version (e.g., '1.0', '2024-01')")
+    )
+    
+    is_primary = models.BooleanField(
+        default=False,
+        verbose_name=_("Primary Resume"),
+        help_text=_("Set as the main/default resume")
+    )
+    
+    is_public = models.BooleanField(
+        default=True,
+        verbose_name=_("Publicly Accessible"),
+        help_text=_("Allow public access to download/view")
+    )
+    
+    last_updated = models.DateTimeField(
+        auto_now=True,
+        verbose_name=_("Last Updated")
+    )
+    
+    file_size = models.BigIntegerField(
+        blank=True,
+        null=True,
+        verbose_name=_("File Size (bytes)"),
+        editable=False
+    )
+    
+    download_count = models.IntegerField(
+        default=0,
+        verbose_name=_("Download Count"),
+        editable=False
+    )
+    
+    view_count = models.IntegerField(
+        default=0,
+        verbose_name=_("View Count"),
+        editable=False
+    )
+    
+    description = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Description"),
+        help_text=_("Brief description of this resume version")
+    )
+    
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name=_("Metadata"),
+        help_text=_("Additional metadata (page count, creation date, etc.)")
+    )
+    
+    # Relationships with other models
+    experiences = models.ManyToManyField(
+        Experience,
+        related_name='resumes',
+        verbose_name=_("Included Experiences"),
+        blank=True
+    )
+    
+    education = models.ManyToManyField(
+        Education,
+        related_name='resumes',
+        verbose_name=_("Included Education"),
+        blank=True
+    )
+    
+    projects = models.ManyToManyField(
+        Project,
+        related_name='resumes',
+        verbose_name=_("Included Projects"),
+        blank=True
+    )
+    
+    technologies = models.ManyToManyField(
+        Technology,
+        related_name='resumes',
+        verbose_name=_("Included Technologies"),
+        blank=True
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = _("Resume")
+        verbose_name_plural = _("Resumes")
+        ordering = ['-is_primary', '-last_updated', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['is_primary'],
+                condition=models.Q(is_primary=True),
+                name='unique_primary_resume'
+            )
+        ]
+    
+    def __str__(self):
+        return f"{self.title} ({self.get_file_type_display()})"
+    
+    def clean(self):
+        """Validate resume file and constraints"""
+        # Validate file type
+        allowed_extensions = {
+            'pdf': '.pdf',
+            'docx': '.docx',
+            'txt': '.txt',
+            'html': '.html'
+        }
+        
+        import os
+        ext = os.path.splitext(self.file.name)[1].lower()
+        expected_ext = allowed_extensions.get(self.file_type, '')
+        
+        if expected_ext and ext != expected_ext:
+            raise ValidationError(
+                _(f"File extension {ext} doesn't match selected file type {self.file_type}.")
+            )
+    
+    def save(self, *args, **kwargs):
+        """Calculate file size on save"""
+        if self.file:
+            self.file_size = self.file.size
+        
+        # Ensure only one primary resume exists
+        if self.is_primary:
+            Resume.objects.filter(is_primary=True).exclude(id=self.id).update(is_primary=False)
+        
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """Handle file deletion when resume is deleted"""
+        if self.file:
+            storage, path = self.file.storage, self.file.path
+            super().delete(*args, **kwargs)
+            storage.delete(path)
+        else:
+            super().delete(*args, **kwargs)
+    
+    @property
+    def file_size_human(self):
+        """Return human-readable file size"""
+        if not self.file_size:
+            return "Unknown"
+        
+        for unit in ['bytes', 'KB', 'MB', 'GB']:
+            if self.file_size < 1024.0:
+                return f"{self.file_size:.1f} {unit}"
+            self.file_size /= 1024.0
+        return f"{self.file_size:.1f} TB"
+    
+    @property
+    def download_url(self):
+        """Generate download URL (you'll need to implement URL routing)"""
+        # This would typically be generated by your view/URL configuration
+        return f"/api/resumes/{self.id}/download/"
+    
+    @property
+    def preview_url(self):
+        """Generate preview URL (for PDFs)"""
+        if self.file_type == 'pdf':
+            return f"/api/resumes/{self.id}/preview/"
+        return None
+    
+    def increment_download_count(self):
+        """Increment download counter"""
+        self.download_count += 1
+        self.save(update_fields=['download_count'])
+    
+    def increment_view_count(self):
+        """Increment view counter"""
+        self.view_count += 1
+        self.save(update_fields=['view_count'])

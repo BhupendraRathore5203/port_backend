@@ -3,6 +3,9 @@ from django.contrib.auth.admin import UserAdmin
 from django.db import models
 from .models import (
     AdminUser,
+    Education,
+    Experience,
+    Resume,
     RotatingText,
     Technology,
     ProjectCategory,
@@ -301,3 +304,173 @@ class RotatingTextAdmin(admin.ModelAdmin):
         updated = queryset.update(is_active=False)
         self.message_user(request, f"{updated} text(s) deactivated successfully")
     deactivate_texts.short_description = "Deactivate selected texts"
+    
+    
+    
+    
+# =========================
+# Experience Admin
+# =========================
+class ExperienceAdminForm(forms.ModelForm):
+    class Meta:
+        model = Experience
+        fields = '__all__'
+    
+    description = forms.CharField(widget=CKEditorWidget(), required=False)
+
+
+@admin.register(Experience)
+class ExperienceAdmin(admin.ModelAdmin):
+    form = ExperienceAdminForm
+    list_display = (
+        "position",
+        "company",
+        "experience_type",
+        "start_date",
+        "end_date",
+        "is_current",
+        "is_featured",
+        "order",
+    )
+    list_filter = ("experience_type", "is_current", "is_featured")
+    search_fields = ("position", "company", "description")
+    ordering = ("-start_date", "order")
+    filter_horizontal = ("technologies", "projects")
+    readonly_fields = ("duration", "duration_months")
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('position', 'company', 'company_logo', 'company_website', 'location')
+        }),
+        ('Employment Details', {
+            'fields': ('experience_type', 'start_date', 'end_date', 'is_current')
+        }),
+        ('Content', {
+            'fields': ('description', 'responsibilities', 'skills_gained'),
+            'classes': ('wide',),
+        }),
+        ('Relationships', {
+            'fields': ('technologies', 'projects')
+        }),
+        ('Settings', {
+            'fields': ('is_featured', 'order')
+        }),
+        ('Computed Fields', {
+            'fields': ('duration', 'duration_months'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def duration(self, obj):
+        return obj.duration
+    duration.short_description = "Duration"
+    
+    def duration_months(self, obj):
+        return obj.duration_months
+    duration_months.short_description = "Duration (months)"
+
+
+# =========================
+# Education Admin
+# =========================
+@admin.register(Education)
+class EducationAdmin(admin.ModelAdmin):
+    list_display = (
+        "degree",
+        "institution",
+        "education_type",
+        "start_date",
+        "end_date",
+        "is_current",
+        "is_featured",
+        "grade_display",
+        "order",
+    )
+    list_filter = ("education_type", "is_current", "is_featured")
+    search_fields = ("degree", "institution", "field_of_study")
+    ordering = ("-start_date", "order")
+    readonly_fields = ("duration_years", "formatted_grade")
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('institution', 'institution_logo', 'institution_website', 'location')
+        }),
+        ('Academic Details', {
+            'fields': ('degree', 'field_of_study', 'education_type', 'start_date', 'end_date', 'is_current')
+        }),
+        ('Content', {
+            'fields': ('description', 'achievements', 'courses', 'skills_learned'),
+            'classes': ('wide',),
+        }),
+        ('Grades & Thesis', {
+            'fields': ('grade_type', 'grade_value', 'grade_scale', 'grade_display', 
+                      'thesis_title', 'thesis_url', 'transcript_url')
+        }),
+        ('Settings', {
+            'fields': ('is_featured', 'order')
+        }),
+        ('Computed Fields', {
+            'fields': ('duration_years', 'formatted_grade'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def duration_years(self, obj):
+        return obj.duration_years
+    duration_years.short_description = "Duration (years)"
+    
+    def formatted_grade(self, obj):
+        return obj.formatted_grade
+    formatted_grade.short_description = "Grade"
+
+
+# =========================
+# Resume Admin
+# =========================
+@admin.register(Resume)
+class ResumeAdmin(admin.ModelAdmin):
+    list_display = (
+        "title",
+        "resume_type",
+        "file_type",
+        "is_primary",
+        "is_public",
+        "download_count",
+        "view_count",
+        "last_updated",
+    )
+    list_filter = ("resume_type", "file_type", "is_primary", "is_public")
+    search_fields = ("title", "description")
+    ordering = ("-is_primary", "-last_updated")
+    filter_horizontal = ("experiences", "education", "projects", "technologies")
+    readonly_fields = ("file_size", "download_count", "view_count", "last_updated", "file_size_human")
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('title', 'file', 'file_type', 'resume_type', 'language', 'version')
+        }),
+        ('Content & Relationships', {
+            'fields': ('description', 'experiences', 'education', 'projects', 'technologies')
+        }),
+        ('Settings', {
+            'fields': ('is_primary', 'is_public', 'metadata')
+        }),
+        ('Statistics', {
+            'fields': ('file_size', 'download_count', 'view_count', 'last_updated'),
+            'classes': ('collapse',),
+        }),
+        ('Computed Fields', {
+            'fields': ('file_size_human',),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    def file_size_human(self, obj):
+        return obj.file_size_human
+    file_size_human.short_description = "File Size"
+    
+    def save_model(self, request, obj, form, change):
+        # Handle file upload and size calculation
+        if 'file' in form.changed_data and obj.file:
+            obj.file_size = obj.file.size
+        super().save_model(request, obj, form, change)
